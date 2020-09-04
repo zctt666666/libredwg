@@ -1,35 +1,116 @@
 language: c
-sudo: false
-dist: bionic
-os:
-  - linux
+#os:
+#  - linux
 #  - osx
-addons:
-  apt:
-    packages:
-      - texinfo
-      - texlive
-      - libxml2
-      - python-libxml2
-      - swig
-      - help2man
-      - libpcre2-dev
-      - libpcre2-32-0
-      - libconvert-binary-c-perl
+
+ci-multi-arch-test.matrix-definitions:
+  - &test_native
+    dist: bionic
+    sudo: false
+    addons:
+      apt:
+        packages:
+          - texinfo
+          - texlive
+          - libxml2
+          - python-libxml2
+          - swig
+          - help2man
+          - libpcre2-dev
+          - libpcre2-32-0
+          - libconvert-binary-c-perl
+    script:
+      - if [ -n "$ASAN" ]; then
+          CLANG="-O0 -fno-omit-frame-pointer -fsanitize=address,undefined -fno-var-tracking" ;
+        fi
+      - ./configure $CONF
+        # ASAN started swapping with only 8GB
+      - if [ -n "$ASAN" ]; then
+            travis_wait make -C src encode.lo ;
+            travis_wait make -C src decode.lo ;
+            travis_wait make -j4 -C src ;
+            make -j4 ;
+        else
+            make -j4 ;
+        fi
+        # ASAN just became too slow. skip unit-tests there.
+      - if [ -n "$DISTCHECK" ]; then
+          travis_wait 30 make -j4 distcheck && sha256sum libredwg-*.tar.* ;
+        else
+          if [ -n "$ASAN" ]; then
+            make -j4 check -C src ;
+            travis_wait make -j4 check -C programs ;
+            travis_wait make -j4 check-minimal -C test/unit-testing/ ;
+          else
+            make -j4 check ;
+          fi
+        fi
+  # https://github.com/junaruga/ci-multi-arch-native-container-test/blob/master/.travis.yml
+  - &test_multi_arch_native_container_test
+    dist: xenial
+    services: docker
+    install:
+      # Install podman on Ubuntu?
+      # https://github.com/containers/libpod/blob/master/install.md#ubuntu
+      #- sudo add-apt-repository -y ppa:projectatomic/ppa
+      #- sudo apt-get update -qq
+      #- sudo apt-get -qq -y install uidmap strace
+      - uname -a
+      - nproc
+      - env
+      - id
+      # Incompatibilities of podman from docker on Travis CI
+      # https://github.com/containers/libpod/issues/3679
+      - sudo mkdir -p /etc/containers
+      - echo -e "[registries.search]\nregistries = ['docker.io']" | sudo tee /etc/containers/registries.conf
+    script:
+      - |
+        travis_retry docker build --rm \
+        -f "Dockerfile-fedora" \
+        -t libredwg-fedora \
+        .
+
 matrix:
   fast_finish: true
   include:
     - compiler: gcc
       env: ASAN=1 CONF="--disable-bindings"
+      <<: *test_native
     - compiler: gcc
       env: DISTCHECK=1 CONF="--enable-release"
+      <<: *test_native
     - compiler: gcc
       env: CONF="--enable-trace"
       #addons:
       #  apt:
       #    packages:
       #      - valgrind
+      <<: *test_native
     - compiler: clang
+      <<: *test_native
+    - os: osx
+      # no python-libxml2 bindings
+      env: CONF="--enable-release --disable-python --disable-bindings"
+      <<: *test_native
+    - name: aarch64-ubuntu
+      arch: arm64
+      env: CONF="--enable-release --disable-python --disable-bindings"
+      <<: *test_native
+    - name: arm32-fedora-docker
+      arch: arm32
+      env:
+        - CONF="--enable-release --disable-python --disable-bindings"
+        - DIST=fedora
+        - BASE_IMAGE=arm32v7/fedora:latest
+      <<: *test_multi_arch_native_container_test
+    # IBM Z, 64-bit, Big-endian. from ci-multi-arch-native-container-test
+    # 4x faster than the other s390x tests
+    - name: s390x-bigendian-fedora-docker
+      arch: s390x
+      env:
+        - DIST=fedora
+        - BASE_IMAGE="${DIST}:31"
+      <<: *test_multi_arch_native_container_test
 
 branches:
   except:
@@ -38,33 +119,8 @@ branches:
 
 install:
   - sh autogen.sh
-
+  
 script:
-  - if [ -n "$ASAN" ]; then
-      CLANG="-O0 -fno-omit-frame-pointer -fsanitize=address,undefined -fno-var-tracking" ;
-    fi
-  - ./configure $CONF
-    # ASAN started swapping with only 8GB
-  - if [ -n "$ASAN" ]; then
-        travis_wait make -C src encode.lo ;
-        travis_wait make -C src decode.lo ;
-        travis_wait make -j4 -C src ;
-        make -j4 ;
-    else
-        make -j4 ;
-    fi
-    # ASAN just became too slow. skip unit-tests there.
-  - if [ -n "$DISTCHECK" ]; then
-      travis_wait 30 make -j4 distcheck && sha256sum libredwg-*.tar.* ;
-    else
-      if [ -n "$ASAN" ]; then
-        make -j4 check -C src ;
-        travis_wait make -j4 check -C programs ;
-        travis_wait make -j4 check-minimal -C test/unit-testing/ ;
-      else
-        make -j4 check ;
-      fi
-    fi
 
 deploy:
   provider: releases
