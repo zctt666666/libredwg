@@ -1,5 +1,5 @@
 # podman/docker build -t libredwg-fedora -f Dockerfile-fedora .
-ARG BASE_IMAGE=fedora
+ARG BASE_IMAGE=s390x/fedora:32
 FROM ${BASE_IMAGE}
 
 # Test with non-root user.
@@ -11,8 +11,8 @@ RUN echo -e "deltarpm=0\ninstall_weak_deps=0\ntsflags=nodocs" >> /etc/dnf/dnf.co
 # if they exists.
 RUN ls /etc/yum.repos.d/*.repo
 RUN sed -i '/^enabled=1$/ s/1/0/' /etc/yum.repos.d/*-modular.repo || true
-RUN dnf -y update
-RUN dnf -y --allowerasing install \
+RUN yum -y update
+RUN yum -y --allowerasing install \
   uname sh bash \
   file gcc git make redhat-rpm-config sudo \
   automake autoconf libtool swig texinfo gcc libxml2 libxml2-devel python3-libxml2 \
